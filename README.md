@@ -2,7 +2,21 @@
 
 <br><br><br>
 -->
-# CycleGAN
+# CycleGAN --> now with Cloud superpower
+
+---
+Fork of to enable training of models on Google Cloud ML.
+
+Modification:
++ improved input pipelines now using native tensorflow ops
++ everything is faster
++ add some input parameters
+
+TODO:
++ code refactoring
++ test not yet converted
+
+----
 
 Tensorflow implementation for learning an image-to-image translation **without** input-output pairs. (Not completed!)
 The method is proposed by [Jun-Yan Zhu](https://people.eecs.berkeley.edu/~junyanz/) in 
@@ -52,17 +66,11 @@ bash ./download_dataset.sh horse2zebra
 ```
 - Train a model:
 ```bash
-CUDA_VISIBLE_DEVICES=0 python main.py --dataset_dir=horse2zebra
+CUDA_VISIBLE_DEVICES=0 python main.py --dataset_dir=$PWD/datasets/horse2zebra
 ```
 - Use tensorboard to visualize the training details:
 ```bash
-tensorboard --logdir=./logs
-```
-
-### Test
-- Finally, test the model:
-```bash
-CUDA_VISIBLE_DEVICES=0 python main.py --dataset_dir=horse2zebra --phase=test --which_direction=AtoB
+tensorboard --logdir=./checkpoints
 ```
 
 ## Training and Test Details
@@ -72,10 +80,6 @@ CUDA_VISIBLE_DEVICES=0 python main.py --dataset_dir=/path/to/data/
 ```
 Models are saved to `./checkpoints/` (can be changed by passing `--checkpoint_dir=your_dir`).  
 
-To test the model,
-```bash
-CUDA_VISIBLE_DEVICES=0 python main.py --dataset_dir=/path/to/data/ --phase=test --which_direction=AtoB/BtoA
-```
 
 ## Datasets
 Download the datasets using the following script:
