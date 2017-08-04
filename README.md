@@ -5,7 +5,7 @@
 # CycleGAN --> now with Cloud superpower
 
 ---
-Fork of to enable training of models on Google Cloud ML.
+Forked to enable the training of CycleGANs models on Google Cloud ML.
 
 Improvement:
 + improved input pipelines now using only native tensorflow ops
@@ -64,19 +64,26 @@ bash ./download_dataset.sh horse2zebra
 ```
 - Train a model:
 ```bash
-CUDA_VISIBLE_DEVICES=0 python main.py --dataset_dir=$PWD/datasets/horse2zebra
+python main.py --phase=train --dataset_dir=$PWD/datasets/horse2zebra
 ```
 - Use tensorboard to visualize the training details:
 ```bash
 tensorboard --logdir=./checkpoints
 ```
 
-## Training and Test Details
-To train a model,  
+### Test
+Assuming a pretrained model is saved in ./checkpoints
 ```bash
-CUDA_VISIBLE_DEVICES=0 python main.py --dataset_dir=/path/to/data/ 
+python main.py --phase test  --which_direction AtoB --dataset_dir=$PWD/datasets/horse2zebra --checkpoint_dir=$PWD/checkpoints --test_dir=$PWD/test_result
 ```
-Models are saved to `./checkpoints/` (can be changed by passing `--checkpoint_dir=your_dir`).  
+In the *test_result* folder will be saved the transformed image and an html for side by side comparison between original and transformed images.
+
+
+## Training and Test Details
+To see additional parameters  
+```bash
+python main.py -h 
+``` 
 
 
 ## Datasets
