@@ -1,11 +1,11 @@
 from __future__ import division
 import os
 import time
-from glob import glob
 import tensorflow as tf
 import numpy as np
 from six.moves import xrange
 from collections import namedtuple
+from scipy import misc
 
 from module import *
 from utils import *
@@ -21,6 +21,7 @@ class cyclegan(object):
         self.output_c_dim = args.output_nc
         self.L1_lambda = args.L1_lambda
         self.dataset_dir = args.dataset_dir
+        self.with_flip=args.flip
         self.dataset_name=self.dataset_dir.split('/')[-1]
 
         self.discriminator = discriminator
@@ -39,7 +40,7 @@ class cyclegan(object):
                                       args.ngf, args.ndf, args.output_nc))
 
         self._build_model()
-        self.saver = tf.train.Saver()
+        self.saver = tf.train.Saver(max_to_keep=2)
         self.pool = ImagePool(args.max_size)
 
     def _build_model(self):
@@ -48,8 +49,8 @@ class cyclegan(object):
         #                                  self.input_c_dim + self.output_c_dim],
         #                                 name='real_A_and_B_images')
 
-        immy_a = self.build_input_image_op(self.dataset_dir+'/trainA',False)
-        immy_b = self.build_input_image_op(self.dataset_dir+'/trainB',False)
+        immy_a,_ = self.build_input_image_op(os.path.join(self.dataset_dir,'trainA'),False)
+        immy_b,_ = self.build_input_image_op(os.path.join(self.dataset_dir,'trainB'),False)
         self.real_A,self.real_B = tf.train.shuffle_batch([immy_a,immy_b],self.batch_size,1000,600,8)
 
         self.fake_B = self.generator(self.real_A, self.options, False, name="generatorA2B")
@@ -98,10 +99,11 @@ class cyclegan(object):
             [self.da_loss_sum, self.da_loss_real_sum, self.da_loss_fake_sum]
         )
 
-        immy_test_a = self.build_input_image_op(self.dataset_dir+'/testA',True)
-        immy_test_b = self.build_input_image_op(self.dataset_dir+'/testB',True)
+        immy_test_a,path_a = self.build_input_image_op(os.path.join(self.dataset_dir,'testA'),True)
+        immy_test_b,path_b = self.build_input_image_op(os.path.join(self.dataset_dir,'testB'),True)
 
-        self.test_A,self.test_B = tf.train.shuffle_batch([immy_test_a,immy_test_b],1,500,100,2)
+        self.test_A,self.test_path_a = tf.train.batch([immy_test_a,path_a],1,2,100)
+        self.test_B,self.test_path_b = tf.train.batch([immy_test_b,path_b],1,2,100)
 
         self.testB = self.generator(self.test_A, self.options, True, name="generatorA2B")
         self.testA = self.generator(self.test_B, self.options, True, name="generatorB2A")
@@ -111,14 +113,15 @@ class cyclegan(object):
         self.da_vars = [var for var in t_vars if 'discriminatorA' in var.name]
         self.g_vars_a2b = [var for var in t_vars if 'generatorA2B' in var.name]
         self.g_vars_b2a = [var for var in t_vars if 'generatorB2A' in var.name]
-        for var in t_vars: print(var.name)
+        # for var in t_vars: print(var.name)
 
     def build_input_image_op(self,dir,is_test=False):
         samples = tf.train.match_filenames_once(dir+'/*.*')
         filename_queue = tf.train.string_input_producer(samples)
-        image_raw = tf.read_file(filename_queue.dequeue())
+        sample_path = filename_queue.dequeue()
+        image_raw = tf.read_file(sample_path)
         image = tf.image.decode_image(image_raw, channels=3)
-        image.set_shape([None, None, 3])
+        image.set_shape([None, None, self.input_c_dim])
 
         #change range of value o [-1,1]
         image = tf.image.convert_image_dtype(image,tf.float32)
@@ -132,11 +135,12 @@ class cyclegan(object):
             image = tf.random_crop(image,[self.image_size,self.image_size,3])
 
             #random flip left right
-            image = tf.image.random_flip_left_right(image)
+            if self.with_flip:
+                image = tf.image.random_flip_left_right(image)
         else:
             image = tf.image.resize_images(image,[self.image_size,self.image_size])
 
-        return image
+        return image,sample_path
 
     def train(self, args):
         """Train cyclegan"""
@@ -228,14 +232,18 @@ class cyclegan(object):
 
     def test(self, args):
         """Test cyclegan"""
-        init_op = tf.global_variables_initializer()
-        self.sess.run(init_op)
-        if args.which_direction == 'AtoB':
-            sample_files = glob('{}/*.*'.format(self.dataset_dir + '/testA'))
-        elif args.which_direction == 'BtoA':
-            sample_files = glob('{}/*.*'.format(self.dataset_dir + '/testB'))
-        else:
-            raise Exception('--which_direction must be AtoB or BtoA')
+        input_dir = os.path.join(self.dataset_dir,'testA') if args.which_direction=='AtoB' else os.path.join(self.dataset_dir,'testB')
+        samples_tf = tf.train.match_filenames_once(input_dir+'/*.*')
+
+        #init everything
+        self.sess.run([tf.global_variables_initializer(),tf.local_variables_initializer()])
+
+        #start queue runners
+        coord = tf.train.Coordinator()
+        tf.train.start_queue_runners()
+        print('Thread running')
+
+        samples = self.sess.run(samples_tf)
 
         if self.load(args.checkpoint_dir):
             print(" [*] Load SUCCESS")
@@ -243,26 +251,36 @@ class cyclegan(object):
             print(" [!] Load failed...")
 
         # write html for visual comparison
+        if not os.path.exists(args.test_dir): #python 2 is dumb...
+            os.makedirs(args.test_dir)
+
         index_path = os.path.join(args.test_dir, '{0}_index.html'.format(args.which_direction))
-        index = open(index_path, "w")
+        index = open(index_path, "w+")
         index.write("<html><body><table><tr>")
         index.write("<th>name</th><th>input</th><th>output</th></tr>")
 
-        out_var, in_var = (self.testB, self.test_A) if args.which_direction == 'AtoB' else (
-            self.testA, self.test_B)
+        print('Fetching')
 
-        for sample_file in sample_files:
-            print('Processing image: ' + sample_file)
-            sample_image = [load_test_data(sample_file)]
-            sample_image = np.array(sample_image).astype(np.float32)
-            image_path = os.path.join(args.test_dir,
-                                      '{0}_{1}'.format(args.which_direction, os.path.basename(sample_file)))
-            fake_img = self.sess.run(out_var, feed_dict={in_var: sample_image})
-            save_images(fake_img, [1, 1], image_path)
-            index.write("<td>%s</td>" % os.path.basename(image_path))
-            index.write("<td><img src='%s'></td>" % (sample_file if os.path.isabs(sample_file) else (
-            '..' + os.path.sep + sample_file)))
-            index.write("<td><img src='%s'></td>" % (image_path if os.path.isabs(image_path) else (
-            '..' + os.path.sep + image_path)))
+        out_var, in_var, path_var = (self.testB, self.test_A, self.test_path_a) if args.which_direction == 'AtoB' else (
+            self.testA, self.test_B, self.test_path_b)
+
+        print('Starting')
+        for i,s in enumerate(samples):
+            print('Processing image: {}/{}'.format(i,len(samples)))
+            fake_img,sample_image,sample_path = self.sess.run([out_var,in_var,path_var])
+            dest_path = sample_path[0].replace(input_dir,args.test_dir)
+            parent_destination = os.path.abspath(os.path.join(dest_path, os.pardir))
+            if not os.path.exists(parent_destination):
+                os.makedirs(parent_destination)
+
+            fake_img = ((fake_img[0]+1)/2)*255
+            misc.imsave(dest_path,fake_img)
+            index.write("<td>%s</td>" % os.path.basename(sample_path[0]))
+            index.write("<td><img src='%s'></td>" % (sample_path[0]))
+            index.write("<td><img src='%s'></td>" % (dest_path))
             index.write("</tr>")
+
+        print('Elaboration complete')
         index.close()
+        coord.request_stop()
+        coord.join(stop_grace_period_secs=10)

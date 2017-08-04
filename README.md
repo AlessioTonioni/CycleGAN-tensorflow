@@ -9,12 +9,10 @@ Fork of to enable training of models on Google Cloud ML.
 
 Modification:
 + improved input pipelines now using native tensorflow ops
++ improved test code
++ removed unused dependencies
 + everything is faster
-+ add some input parameters
-
-TODO:
-+ code refactoring
-+ test not yet converted
++ add some input parameters, removed a lot of unused ones
 
 ----
 
