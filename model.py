@@ -115,9 +115,8 @@ class cyclegan(object):
         self.g_vars_b2a = [var for var in t_vars if 'generatorB2A' in var.name]
         # for var in t_vars: print(var.name)
 
-    def build_input_image_op(self,dir,is_test=False):
+    def build_input_image_op(self,dir,is_test=False,num_epochs=None):
         samples = tf.train.match_filenames_once(dir+'/*.jpg')
-        num_epochs=1 if is_test else None
         filename_queue = tf.train.string_input_producer(samples,num_epochs=num_epochs)
         sample_path = filename_queue.dequeue()
         image_raw = tf.read_file(sample_path)
@@ -264,7 +263,7 @@ class cyclegan(object):
 
     def test(self, args):
         """Test cyclegan""" 
-        sample_op, sample_path,im_shape = self.build_input_image_op(self.dataset_dir,True)
+        sample_op, sample_path,im_shape = self.build_input_image_op(self.dataset_dir,is_test=True,num_epochs=1)
         sample_batch,path_batch,im_shapes = tf.train.batch([sample_op,sample_path,im_shape],batch_size=self.batch_size,num_threads=4,capacity=self.batch_size*50,allow_smaller_final_batch=True)
         gen_name='generatorA2B' if args.which_direction=="AtoB" else 'generatorB2A'
         cycle_image_batch = self.generator(sample_batch,self.options,name=gen_name)
