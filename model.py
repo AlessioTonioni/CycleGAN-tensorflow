@@ -38,19 +38,19 @@ class cyclegan(object):
                               gf_dim df_dim output_c_dim')
         self.options = OPTIONS._make((args.batch_size, args.fine_size,
                                       args.ngf, args.ndf, args.output_nc))
-
-        self._build_model()
-        self.saver = tf.train.Saver(max_to_keep=2)
-        self.pool = ImagePool(args.max_size)
+        if args.phase=='train':
+            self._build_model()
+            self.saver = tf.train.Saver(max_to_keep=2)
+            self.pool = ImagePool(args.max_size)
 
     def _build_model(self):
         # self.real_data = tf.placeholder(tf.float32,
         #                                 [None, self.image_size, self.image_size,
         #                                  self.input_c_dim + self.output_c_dim],
         #                                 name='real_A_and_B_images')
-
-        immy_a,_ = self.build_input_image_op(os.path.join(self.dataset_dir,'trainA'),False)
-        immy_b,_ = self.build_input_image_op(os.path.join(self.dataset_dir,'trainB'),False)
+    
+        immy_a,_ ,_= self.build_input_image_op(os.path.join(self.dataset_dir,'trainA'),False)
+        immy_b,_ ,_= self.build_input_image_op(os.path.join(self.dataset_dir,'trainB'),False)
         self.real_A,self.real_B = tf.train.shuffle_batch([immy_a,immy_b],self.batch_size,1000,600,8)
 
         self.fake_B = self.generator(self.real_A, self.options, False, name="generatorA2B")
@@ -99,8 +99,8 @@ class cyclegan(object):
             [self.da_loss_sum, self.da_loss_real_sum, self.da_loss_fake_sum]
         )
 
-        immy_test_a,path_a = self.build_input_image_op(os.path.join(self.dataset_dir,'testA'),True)
-        immy_test_b,path_b = self.build_input_image_op(os.path.join(self.dataset_dir,'testB'),True)
+        immy_test_a,path_a,_ = self.build_input_image_op(os.path.join(self.dataset_dir,'testA'),True)
+        immy_test_b,path_b,_ = self.build_input_image_op(os.path.join(self.dataset_dir,'testB'),True)
 
         self.test_A,self.test_path_a = tf.train.batch([immy_test_a,path_a],1,2,100)
         self.test_B,self.test_path_b = tf.train.batch([immy_test_b,path_b],1,2,100)
@@ -116,12 +116,14 @@ class cyclegan(object):
         # for var in t_vars: print(var.name)
 
     def build_input_image_op(self,dir,is_test=False):
-        samples = tf.train.match_filenames_once(dir+'/*.*')
-        filename_queue = tf.train.string_input_producer(samples)
+        samples = tf.train.match_filenames_once(dir+'/*.jpg')
+        num_epochs=1 if is_test else None
+        filename_queue = tf.train.string_input_producer(samples,num_epochs=num_epochs)
         sample_path = filename_queue.dequeue()
         image_raw = tf.read_file(sample_path)
         image = tf.image.decode_image(image_raw, channels=3)
         image.set_shape([None, None, self.input_c_dim])
+        im_shape=tf.shape(image)
 
         #change range of value o [-1,1]
         image = tf.image.convert_image_dtype(image,tf.float32)
@@ -140,7 +142,7 @@ class cyclegan(object):
         else:
             image = tf.image.resize_images(image,[self.image_size,self.image_size])
 
-        return image,sample_path
+        return image,sample_path,im_shape
 
     def train(self, args):
         """Train cyclegan"""
@@ -220,20 +222,52 @@ class cyclegan(object):
                         global_step=step)
 
     def load(self, checkpoint_dir):
+        def get_var_to_restore_list(ckpt_path, mask=[], prefix=""):
+            """
+            Get all the variable defined in a ckpt file and add them to the returned var_to_restore list. Allows for partially defined model to be restored fomr ckpt files.
+            Args:
+                ckpt_path: path to the ckpt model to be restored
+                mask: list of layers to skip
+                prefix: prefix string before the actual layer name in the graph definition
+            """
+            variables = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES)
+            variables_dict = {}
+            for v in variables:
+                name = v.name[:-2]
+                skip=False
+                #check for skip
+                for m in mask:
+                    if m in name:
+                        skip=True
+                        continue
+                if not skip:
+                    variables_dict[v.name[:-2]] = v
+            #print(variables_dict)
+            reader = tf.train.NewCheckpointReader(ckpt_path)
+            var_to_shape_map = reader.get_variable_to_shape_map()
+            var_to_restore = {}
+            for key in var_to_shape_map:
+                #print(key)
+                if prefix+key in variables_dict.keys():
+                    var_to_restore[key] = variables_dict[prefix+key]
+            return var_to_restore
+
         print(" [*] Reading checkpoint...")
 
-        model_name = "%s_%s" % (self.dataset_name, self.image_size)
         ckpt = tf.train.get_checkpoint_state(checkpoint_dir)
         if ckpt and ckpt.model_checkpoint_path:
-            self.saver.restore(self.sess, ckpt.model_checkpoint_path)
+            savvy = tf.train.Saver(var_list=get_var_to_restore_list(ckpt.model_checkpoint_path))
+            savvy.restore(self.sess, ckpt.model_checkpoint_path)
             return True
         else:
             return False
 
     def test(self, args):
-        """Test cyclegan"""
-        input_dir = os.path.join(self.dataset_dir,'testA') if args.which_direction=='AtoB' else os.path.join(self.dataset_dir,'testB')
-        samples_tf = tf.train.match_filenames_once(input_dir+'/*.*')
+        """Test cyclegan""" 
+        sample_op, sample_path,im_shape = self.build_input_image_op(self.dataset_dir,True)
+        sample_batch,path_batch,im_shapes = tf.train.batch([sample_op,sample_path,im_shape],batch_size=self.batch_size,num_threads=4,capacity=self.batch_size*50,allow_smaller_final_batch=True)
+        gen_name='generatorA2B' if args.which_direction=="AtoB" else 'generatorB2A'
+        cycle_image_batch = self.generator(sample_batch,self.options,name=gen_name)
 
         #init everything
         self.sess.run([tf.global_variables_initializer(),tf.local_variables_initializer()])
@@ -242,8 +276,6 @@ class cyclegan(object):
         coord = tf.train.Coordinator()
         tf.train.start_queue_runners()
         print('Thread running')
-
-        samples = self.sess.run(samples_tf)
 
         if self.load(args.checkpoint_dir):
             print(" [*] Load SUCCESS")
@@ -259,26 +291,32 @@ class cyclegan(object):
         index.write("<html><body><table><tr>")
         index.write("<th>name</th><th>input</th><th>output</th></tr>")
 
-        print('Fetching')
-
-        out_var, in_var, path_var = (self.testB, self.test_A, self.test_path_a) if args.which_direction == 'AtoB' else (
-            self.testA, self.test_B, self.test_path_b)
-
         print('Starting')
-        for i,s in enumerate(samples):
-            print('Processing image: {}/{}'.format(i,len(samples)))
-            fake_img,sample_image,sample_path = self.sess.run([out_var,in_var,path_var])
-            dest_path = sample_path[0].replace(input_dir,args.test_dir)
-            parent_destination = os.path.abspath(os.path.join(dest_path, os.pardir))
-            if not os.path.exists(parent_destination):
-                os.makedirs(parent_destination)
+        batch_num=0
+        while True:
+            try:
+                print('Processed images: {}'.format(batch_num*args.batch_size), end='\r')
+                fake_imgs,sample_images,sample_paths,im_sps = self.sess.run([cycle_image_batch,sample_batch,path_batch,im_shapes])
+                #iterate over each sample in the batch
+                for rr in range(fake_imgs.shape[0]):
+                    #create output destination
+                    dest_path = sample_paths[rr].decode('UTF-8').replace(self.dataset_dir,args.test_dir)
+                    parent_destination = os.path.abspath(os.path.join(dest_path, os.pardir))
+                    if not os.path.exists(parent_destination):
+                        os.makedirs(parent_destination)
 
-            fake_img = ((fake_img[0]+1)/2)*255
-            misc.imsave(dest_path,fake_img)
-            index.write("<td>%s</td>" % os.path.basename(sample_path[0]))
-            index.write("<td><img src='%s'></td>" % (sample_path[0]))
-            index.write("<td><img src='%s'></td>" % (dest_path))
-            index.write("</tr>")
+                    fake_img = ((fake_imgs[rr]+1)/2)*255
+                    im_sp = im_sps[rr]
+                    fake_img = misc.imresize(fake_img,(im_sp[0],im_sp[1]))
+                    misc.imsave(dest_path,fake_img)
+                    index.write("<td>%s</td>" % os.path.basename(sample_paths[rr].decode('UTF-8')))
+                    index.write("<td><img src='%s'></td>" % (sample_paths[rr].decode('UTF-8')))
+                    index.write("<td><img src='%s'></td>" % (dest_path))
+                    index.write("</tr>")
+                batch_num+=1
+            except Exception as e:
+                print(e)
+                break;
 
         print('Elaboration complete')
         index.close()

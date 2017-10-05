@@ -38,8 +38,10 @@ def main(_):
 
     with tf.Session() as sess:
         model = cyclegan(sess, args)
-        model.train(args) if args.phase == 'train' \
-            else model.test(args)
+        if args.phase == 'train':
+            model.train(args)
+        else: 
+            model.test(args)
 
 if __name__ == '__main__':
     tf.app.run()
