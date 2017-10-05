@@ -76,7 +76,9 @@ Assuming a pretrained model is saved in ./checkpoints
 ```bash
 python main.py --phase test  --which_direction AtoB --dataset_dir=$PWD/datasets/horse2zebra --checkpoint_dir=$PWD/checkpoints --test_dir=$PWD/test_result
 ```
-In the *test_result* folder will be saved the transformed image and an html for side by side comparison between original and transformed images.
++ *dataset_dir* is a directory containing all the image to be transformed by Cycle GAN.
+
++ *test_result* is the folder were will be saved the transformed image and an html for side by side comparison between original and transformed images. The directory structure of dataset_dir will be manteined.
 
 
 ## Training and Test Details
